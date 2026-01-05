@@ -128,7 +128,26 @@ def calculate_confidence(requirement_id: int, db: Session):
     return int((len(closed) / len(tickets)) * 100)
 
 
-# --- 5. FASTAPI APP ---
+# =============================
+# 5. FASTAPI APP
+# =============================
+# The main FastAPI application instance and dependency for DB sessions.
+
+app = FastAPI(title="Deal Flow Orchestrator")
+
+
+def get_db():
+    """
+    Dependency that provides a database session to endpoints.
+    Closes the session after use.
+    """
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 app = FastAPI(title="Deal Flow Orchestrator")
 
 
