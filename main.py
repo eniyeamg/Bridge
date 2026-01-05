@@ -34,14 +34,24 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
-# --- 2. SQLALCHEMY MODELS ---
+# =============================
+# 2. SQLALCHEMY MODELS
+# =============================
+# These classes define the database tables and their relationships using SQLAlchemy ORM.
+
+
 class DealModel(Base):
+    """
+    Represents a sales deal.
+    - Has a title, client name, revenue impact, currency, stage, probability, and forecast date.
+    - Linked to multiple requirements (technical needs for the deal).
+    """
+
     __tablename__ = "deals"
 
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
     client_name = Column(String, nullable=False)
-
     revenue_impact = Column(Float, default=0.0)
     currency = Column(String(3), default="GBP")
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -49,21 +59,36 @@ class DealModel(Base):
     probability = Column(Integer, default=20)  # 20%, 50%, 90%
     forecast_date = Column(DateTime)  # Estimated close date
 
+    # Relationship: One deal has many requirements
     requirements = relationship("RequirementModel", back_populates="deal")
 
 
 class RequirementModel(Base):
+    """
+    Represents a technical requirement for a deal.
+    - Linked to a specific deal.
+    - Can have multiple engineering tickets.
+    """
+
     __tablename__ = "requirements"
 
     id = Column(Integer, primary_key=True, index=True)
     description = Column(Text, nullable=False)
     deal_id = Column(Integer, ForeignKey("deals.id"))
 
+    # Relationship: Each requirement belongs to one deal
     deal = relationship("DealModel", back_populates="requirements")
+    # Relationship: One requirement can have many engineering tickets
     tickets = relationship("EngineeringTicketModel", back_populates="requirement")
 
 
 class EngineeringTicketModel(Base):
+    """
+    Represents an engineering ticket (task) related to a requirement.
+    - Has a priority and status.
+    - Linked to a specific requirement.
+    """
+
     __tablename__ = "engineering_tickets"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -71,19 +96,32 @@ class EngineeringTicketModel(Base):
     status = Column(String, default="Open")
     requirement_id = Column(Integer, ForeignKey("requirements.id"))
 
+    # Relationship: Each ticket belongs to one requirement
     requirement = relationship("RequirementModel", back_populates="tickets")
 
 
-# --- 3. PYDANTIC SCHEMAS ---
+# =============================
+# 3. PYDANTIC SCHEMAS
+# =============================
+# These classes define the data validation and serialization logic for FastAPI endpoints.
+# They are used for request and response bodies.
+
+
 class RequirementBase(BaseModel):
+    """Base schema for a requirement."""
+
     description: str
 
 
 class RequirementCreate(RequirementBase):
+    """Schema for creating a new requirement (includes deal_id)."""
+
     deal_id: int
 
 
 class Requirement(RequirementBase):
+    """Schema for returning a requirement, including its ID and confidence score."""
+
     id: int
     confidence_score: Optional[int] = 0
 
@@ -92,6 +130,8 @@ class Requirement(RequirementBase):
 
 
 class DealBase(BaseModel):
+    """Base schema for a deal."""
+
     title: str
     client_name: Optional[str] = None
     revenue_impact: Optional[float] = 0.0
@@ -102,6 +142,8 @@ class DealBase(BaseModel):
 
 
 class DealCreate(DealBase):
+    """Schema for creating a new deal."""
+
     pass
 
 
@@ -113,8 +155,17 @@ class Deal(DealBase):
         from_attributes = True
 
 
-# --- 4. INTERNAL LOGIC ---
+# =============================
+# 4. INTERNAL LOGIC
+# =============================
+# Helper functions for business logic, e.g., calculating confidence scores.
+
+
 def calculate_confidence(requirement_id: int, db: Session):
+    """
+    Calculates the confidence score for a requirement based on the percentage of closed engineering tickets.
+    Returns an integer percentage (0-100).
+    """
     tickets = (
         db.query(EngineeringTicketModel)
         .filter(EngineeringTicketModel.requirement_id == requirement_id)
@@ -159,19 +210,34 @@ def get_db():
         db.close()
 
 
-# --- 6. ENDPOINTS ---
+# =============================
+# 6. ENDPOINTS
+# =============================
+# These are the API endpoints exposed by the FastAPI app.
+# Each endpoint is responsible for a specific operation (health check, CRUD, business logic, etc).
+
+
 @app.get("/")
 def health_check():
+    """
+    Health check endpoint to verify the API is online.
+    """
     return {"status": "online"}
 
 
 @app.get("/sales/pipeline/", response_model=List[Deal])
 def get_sales_pipeline(db: Session = Depends(get_db)):
+    """
+    Returns all deals in the sales pipeline, ordered by revenue impact (descending).
+    """
     return db.query(DealModel).order_by(desc(DealModel.revenue_impact)).all()
 
 
 @app.post("/deals/", response_model=Deal)
 def create_deal(deal: DealCreate, db: Session = Depends(get_db)):
+    """
+    Creates a new deal in the database.
+    """
     db_deal = DealModel(**deal.dict())
     db.add(db_deal)
     db.commit()
@@ -181,6 +247,10 @@ def create_deal(deal: DealCreate, db: Session = Depends(get_db)):
 
 @app.get("/deals/{deal_id}/ribbon")
 def get_revenue_ribbon(deal_id: int, db: Session = Depends(get_db)):
+    """
+    Returns a summary (ribbon) for a deal, including business value, stage, alignment score, and risk status.
+    Calculates the tech alignment based on engineering progress vs. sales probability.
+    """
     db_deal = db.query(DealModel).filter(DealModel.id == deal_id).first()
     if not db_deal:
         raise HTTPException(status_code=404, detail="Deal not found")
@@ -209,7 +279,9 @@ def get_revenue_ribbon(deal_id: int, db: Session = Depends(get_db)):
 
 @app.post("/requirements/", response_model=Requirement)
 def create_requirement_for_deal(req: RequirementCreate, db: Session = Depends(get_db)):
-    """Creates a new technical requirement linked to a specific deal."""
+    """
+    Creates a new technical requirement linked to a specific deal.
+    """
     db_req = RequirementModel(description=req.description, deal_id=req.deal_id)
     db.add(db_req)
     db.commit()
